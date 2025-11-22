@@ -1,3 +1,10 @@
+# user files
+/data
+/plots_tables
+.DS_Store
+01_clean_organize_2025.rmd
+02_analyze_2025.rmd
+
 # History files
 .Rhistory
 .Rapp.history
