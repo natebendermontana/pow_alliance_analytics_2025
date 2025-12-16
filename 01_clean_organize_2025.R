@@ -67,17 +67,15 @@ df_name_corrections <- tibble::tribble(
   "full_name", "Nick Russel",   "Nick Russell", 
   "full_name", "Blake Keough",  "Blake Keogh",
   "full_name", "Blake Koegh",  "Blake Keogh",
-  "full_name", "Carolina Rubio-MacWright",  "Carolina Rubio MacWright"
-  
-  
-  
-  
+  "full_name", "Carolina Rubio-MacWright",  "Carolina Rubio MacWright",
+  "full_name", "Ti Eversole",                 "Tiona Eversole",
+  "full_name", "Fiona O'Keefe",               "Fiona O'Keeffe"
 )
 
 ################################################################################
 # Functions
 ################################################################################
-func_apply_name_corrections <- function(df, corrections) {
+func_clean_names <- function(df, corrections) {
   apply_field <- function(df, field_name) {
     if (!field_name %in% names(df)) return(df)
     corr <- corrections %>%
@@ -231,7 +229,7 @@ csv_files
 df_athlete_ids <-  read.csv(here("data",  "2024_us_active_alliance_members.csv")) %>% 
   clean_names() %>% 
   select(salesforce_id, first_name, last_name, alliance_type, alliance_group, facebook, instagram, twitter) %>% 
-  func_apply_name_corrections(df_name_corrections) %>% 
+  func_clean_names(df_name_corrections) %>% 
   mutate(
     full_name = paste(first_name, last_name)) %>% 
   filter(full_name != "229.0 NA") %>% 
@@ -267,7 +265,7 @@ df_alliance <- df_alliance_raw %>%
     is.na(investment_level) ~ "low"),
   alliance_member_since = as.Date(alliance_member_since, format = "%m/%d/%Y")) %>% 
 # clean up names
-  func_apply_name_corrections(df_name_corrections) %>%
+  func_clean_names(df_name_corrections) %>%
   # bring in salesforce ID for existing members
   left_join(df_athlete_ids %>% select(first_name, last_name, salesforce_id, instagram), by = c("first_name", "last_name")) %>% 
   # clean up instagram URLs for matching with the Dash-Hudson social data later
@@ -321,6 +319,8 @@ df_alliance <- df_alliance_raw %>%
       salesforce_id
     )
   ) %>% 
+  # filter to unique instances of salesforce_id
+  distinct(salesforce_id, .keep_all = TRUE) %>% 
 # finally, select just the cols we want
   select(salesforce_id, full_name, first_name, last_name, investment_level, alliance_group, alliance_status, alliance_member_since, 
          mailing_zip_postal_code, mailing_state_province_text_only, instagram_username)
@@ -475,6 +475,7 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
     mutate(
       date_clean = func_clean_date(start_end_date)
     ) %>% 
+  ### DO WE WANT TO FILTER TO ONLY "DONE" STATUS? 
   filter(status == "Done") %>% 
   # split the athlete names column on semicolons first
   mutate(athlete_s = str_split(athlete_s, ",")) %>%
@@ -502,94 +503,122 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
   # select only the cols we need
   select(date_clean, full_name, campaign_name, status, department) %>% 
   # clean up names and bring in IDs
-  func_apply_name_corrections(df_name_corrections) %>% 
+  func_clean_names(df_name_corrections) %>% 
   left_join(df_athlete_ids %>% select(full_name, salesforce_id), by = "full_name") %>% 
   select(salesforce_id, full_name, date_clean, everything())
 
 
 
-
-
-##################### in progress
-
-  
-    #     last_name = ifelse(last_name == "Peterson", "Petersen", last_name),
-  #   last_name = ifelse(last_name == "Schumaker", "Schumacher", last_name),
-  #   last_name = ifelse(last_name == "DiGuilian", "DiGiulian", last_name),
-  #   last_name = ifelse(last_name == "O'Keefe", "O'Keeffe", last_name),
-  #   last_name = ifelse(last_name == "Lee Brooks", "Brooks", last_name),
-  #   last_name = ifelse(last_name == "Siergrist", "Siegrist", last_name),
-  #   last_name = ifelse(last_name == "Chavarraga", "Chavarriaga", last_name),
-  #   first_name = ifelse(first_name == "Torey", "Torey Lee", first_name),
-  #   first_name = ifelse(first_name == "Emilé", "Emile", first_name)
-  left_join(
-    df_alliance %>% select(first_name, last_name, salesforce_id), 
-    by = c("first_name", "last_name")
-  )
-
-na_counts$df_newsletters_engagements <- sum(is.na(df_newsletters_engagements$salesforce_id))
-
-df_newsletters_engagements <- df_newsletters_engagements %>%
-  filter(!is.na(salesforce_id)) %>% 
-  select(salesforce_id, first_name, last_name, everything())
-
-
-## Alliance Appreciation Events
-df_appreciation_events_raw <- read.csv(here("data",  "2024_alliance_appreciation_event.csv"), header = T, stringsAsFactors = FALSE)
-
-df_appreciation_events <- df_appreciation_events_raw %>% 
-  filter(CONFIRMED=="TRUE") %>% 
-  select(NAME, LOCATION) %>%
-  separate(NAME, into = c("first_name", "last_name"), sep = " ", extra = "merge") %>%  
-  rename(engagement_location = LOCATION) %>% 
-  mutate(
-    engagement_location = case_when(
-      engagement_location == "CA / RENO" ~ "reno_ca",
-      engagement_location == "SALT LAKE CITY, UT" ~ "slc_ut",
-      engagement_location == "FRONT RANGE, CO" ~ "frontrange_co",
-      engagement_location == "SW COLORADO" ~ "sw_co",
-      engagement_location == "MONTANA" ~ "unknown_mt",
-      engagement_location == "BEND, OR" ~ "bend_or",
-      engagement_location == "NEW ENGLAND" ~ "unknown_vt",
-      engagement_location == "ROARING FORK, CO" ~ "roaringfork_co",
-      TRUE ~ engagement_location  
-    ),
-    first_name = ifelse(first_name == "Torey", "Torey Lee", first_name),
-    last_name = ifelse(last_name == "Merill", "Merrill", last_name),
-    
-    # Add engagement_date based on engagement_location
-    engagement_date = case_when(
-      engagement_location == "bend_or" ~ as.Date("2024-06-20"),
-      engagement_location == "sw_co" ~ as.Date("2024-07-16"),
-      engagement_location == "roaringfork_co" ~ as.Date("2024-07-26"),
-      engagement_location == "unknown_mt" ~ as.Date("2024-07-24"),
-      engagement_location == "frontrange_co" ~ as.Date("2024-07-23"),
-      engagement_location == "reno_ca" ~ as.Date("2024-07-26"),
-      engagement_location == "unknown_vt" ~ as.Date("2024-10-24"),
-      # MAKING THIS UP FOR THE MOMENT - CONFIRM BEFORE GOING LIVE
-      engagement_location == "slc_ut" ~ as.Date("2024-07-23"),
-      TRUE ~ as.Date(NA)  
-    )
-  ) %>% 
-  left_join(
-    df_alliance %>% select(first_name, last_name, salesforce_id), 
-    by = c("first_name", "last_name") 
-  )
-
-na_counts$df_appreciation_events <- sum(is.na(df_appreciation_events$salesforce_id))
-
-df_appreciation_events <- df_appreciation_events %>%
-  filter(!is.na(salesforce_id)) %>% 
-  select(salesforce_id, first_name, last_name, everything())
-
-
 ################################################################################
-### Newsletters - general engagements
+### Alliance Appreciation Events
 ################################################################################
 df_appreciation_events_raw <- read.csv(here("data",  "2025_alliance_appreciation_event.csv"), header = T, stringsAsFactors = FALSE) %>% 
   clean_names()
 
 df_appreciation_events <- df_appreciation_events_raw %>% 
-  select(-event_event_name, -x2, -email) %>% 
-  filter(!is.na(contact))
+  mutate(
+    event_name = stringr::str_replace(event_name, "^.*?:\\s*", "")
+  ) %>% 
+  rename(full_name = contact) %>% 
+  filter(!is.na(full_name)) %>% 
+  func_clean_names(df_name_corrections) %>% 
+  left_join(
+    df_alliance %>% select(full_name, salesforce_id), 
+    by = c("full_name") 
+  ) %>% 
+  select(salesforce_id, full_name, event_name)
+
+
+################################################################################
+### Social Media
+################################################################################
+df_socials_raw <- read.csv(here("data",  "SOCIAL DATA FROM SPROUT Relationships-Overview-Post-Count-2025-01-01-2025-11-19-1763493637.csv"), header = T, stringsAsFactors = FALSE) %>% 
+  clean_names()
+
+cols_to_rename <- c("username",
+                    "followers", "followers_gained", "number_of_posts_ft_pow",
+                    "avg_total_engagements", "avg_total_engagements_ft_pow",
+                    "avg_est_reach", "avg_est_reach_ft_pow",
+                    "avg_eng_rate_of_all_posts", "avg_eng_rate_ft_pow",
+                    "avg_effectiveness", "avg_effectiveness_ft_pow",
+                    "avg_emv", "total_emv"
+)
+
+df_socials <- df_socials_raw %>% 
+  select(-notes, -date_added) %>% 
+  # Clean and rename column names
+  rename_with(~ .x %>%
+                tolower() %>%                              
+                str_replace_all("\\.", "_") %>%            
+                str_replace_all("(?i)you", "pow") %>%    
+                str_replace_all("__", "_") %>% 
+                str_replace_all("_$", "")) %>% #remove trailing underscores   
+  # second rename_with call separated from the first for readability. This one prefixes "insta_" onto all the relevant cols
+  # so analysis later is easier. 
+  rename_with(
+    .fn = ~ paste0("insta_", .),
+    .cols = all_of(cols_to_rename)
+  ) %>% 
+  # Clean `relationship_tags` column and filter out non-athletes
+  mutate(relationship_tags = str_replace_all(relationship_tags, '^"|"$', ""),
+         insta_username = case_when(
+           insta_username == "__alyssagonzalez" ~ "_alyssagonzalez",
+             TRUE                      ~ insta_username
+           )) %>% 
+  filter(relationship_tags=="Athlete") %>% 
+left_join(
+  # grabbing alliance_group for QA purposes
+  df_alliance %>% select(salesforce_id, first_name, last_name, instagram_username),
+  by = c("insta_username" = "instagram_username")
+) %>% 
+  select(-relationship_tags) %>% 
+  select(salesforce_id, first_name, last_name, insta_username, everything())
+
+
+################################################################################
+### Reconciliation & Public Lands Campaigns
+################################################################################
+# grab only the PPL stuff
+df_pl_campaigns_raw <- read.csv(here("data",  "2025_reconciliation_pl_campaigns.csv"), header = T, stringsAsFactors = FALSE) %>% 
+  clean_names()
+
+df_pl_campaigns <- df_pl_campaigns_raw %>% 
+  slice_head(n=98) %>% 
+  select(first_name, last_name, social_campaign) %>% 
+  filter(!is.na(first_name)) %>% 
+  # break out moonrise collective and separate the names
+  mutate(
+    full_name = case_when(
+      first_name == "Moonrise Creative" ~
+        "Sierra Schlag, Katie Cooney, Sara Beam Robbins, Iz La Motte",
+      
+      is.na(last_name) ~
+        first_name,
+      
+      TRUE ~
+        paste(first_name, last_name)
+    )
+  ) %>%
+  separate_rows(full_name, sep = ",\\s*") %>% 
+  func_clean_names(df_name_corrections) %>% 
+  left_join(df_alliance %>% select(full_name, salesforce_id), by = "full_name") %>% 
+  filter(!is.na(salesforce_id)) %>% 
+  select(salesforce_id, full_name, social_campaign)
+
+
+
+
+df_opeds_other <- df_pl_campaigns_raw %>% 
+  filter(row_number() >= 99)
+
+# keep only OPEDS for Lindsy, Nick, Brody
+# STORIES - tbd
+
+################################################################################
+### Combine dataframes
+################################################################################
+
+
+anti_join(dupes_rm_newsletter_engagements, by = c("first_name", "last_name", "engagement_type", "engagement_date", "engagement_desc")) %>% 
+  
 
