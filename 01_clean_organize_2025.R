@@ -27,6 +27,31 @@ theme_set(theme_fivethirtyeight())
 ################################################################################
 # Reference Tables
 ################################################################################
+df_name_corrections <- tribble(
+  ~field, ~original,      ~corrected,
+  "full_name", "Samuel Linnet",     "Sam Linnet",
+  "full_name", "Lyndsy Dyer",  "Lynsey Dyer", 
+  "full_name", "Nick Russel",   "Nick Russell", 
+  "full_name", "Blake Keough",  "Blake Keogh",
+  "full_name", "Blake Koegh",  "Blake Keogh",
+  "full_name", "Carolina Rubio-MacWright",  "Carolina Rubio MacWright",
+  "full_name", "Carolina Rubio macwright",  "Carolina Rubio MacWright",
+  "full_name", "Ti Eversole",                 "Tiona Eversole",
+  "full_name", "Fiona O'Keefe",               "Fiona O'Keeffe",
+  "full_name", "Fiona O'keeffe",               "Fiona O'Keeffe",
+
+  "full_name", "Gus Schumaker",               "Gus Schumacher",
+  "full_name", "Abbey Levine",               "Abbey Levene",
+  "full_name", "Beth Roden",               "Beth Rodden",
+  "full_name", "Drew Peterson",               "Drew Petersen",
+  "full_name", "Jonathan Siergrist",               "Jonathan Siegrist",
+  "full_name", "Vanessa Chavarraga",               "Vanessa Chavarriaga",
+  "full_name", "Thorn Merill",               "Thorn Merrill",
+  "full_name", "Hilary Hutchinson",               "Hilary Hutcheson",
+  
+)
+
+
 df_name_corrections <- tibble::tribble(
   ~field,       ~original,              ~corrected,
   
@@ -63,13 +88,8 @@ df_name_corrections <- tibble::tribble(
   "last_name", "Uehisa jurek",            "Jurek",
   
   # ---- Full NAME CORRECTIONS ----
-  "full_name", "Lyndsy Dyer",  "Lynsey Dyer", 
-  "full_name", "Nick Russel",   "Nick Russell", 
-  "full_name", "Blake Keough",  "Blake Keogh",
-  "full_name", "Blake Koegh",  "Blake Keogh",
-  "full_name", "Carolina Rubio-MacWright",  "Carolina Rubio MacWright",
-  "full_name", "Ti Eversole",                 "Tiona Eversole",
-  "full_name", "Fiona O'Keefe",               "Fiona O'Keeffe"
+
+  
 )
 
 ################################################################################
@@ -180,6 +200,63 @@ func_clean_date <- function(x) {
 }
 
 
+
+
+standardize_name <- function(x) {
+  x %>%
+    # ensure character
+    as.character() %>%
+    
+    # trim leading/trailing whitespace
+    str_trim() %>%
+    
+    # remove titles at start
+    str_remove(
+      regex(
+        "^(mr|mrs|ms|miss|mx|dr)\\.?\\s+",
+        ignore_case = TRUE
+      )
+    ) %>%
+    
+    # replace non-letter characters (but KEEP accented letters)
+    str_replace_all("[^\\p{L}'\\s]", " ") %>%
+    
+    # collapse multiple spaces
+    str_squish() %>%
+    
+    # lowercase everything
+    str_to_lower() %>%
+    
+    # capitalize first letter of each word
+    str_replace_all(
+      "\\b[a-z]",
+      ~ str_to_upper(.x)
+    )
+}
+
+split_first_last <- function(x) {
+  tibble(
+    first_name = str_trim(str_remove(x, "\\s+\\S+$")),
+    last_name  = str_extract(x, "\\S+$")
+  )
+}
+
+
+apply_manual_name_corrections <- function(x, field, corrections_df) {
+  lookup <- corrections_df %>%
+    dplyr::filter(.data$field == field) %>%
+    dplyr::select(original, corrected)
+  
+  out <- x
+  
+  idx <- match(out, lookup$original)
+  
+  out[!is.na(idx)] <- lookup$corrected[idx[!is.na(idx)]]
+  
+  out
+}
+
+
 ################################################################################
 # Clean up filenames and load data
 ################################################################################
@@ -188,18 +265,12 @@ files <- list.files(data_folder)
 files
 
 new_names <- c(
-  #"2024 Data for Nate - Athlete Alliance AAA and Creative Grant Projects.xlsx" = "2024_aaa_grant_projects.xlsx",
   "POW Empowerment Grant  (Responses).xlsx" = "2025_empowerment_grants.xlsx",
   "PR Placements.xlsx" = "2025_pr_placements.xlsx",
   "All Athlete, Creative, Science Alliances-2025-11-18-10-42-41.xlsx" = "2025_us_active_alliance_members.xlsx",
   "2025 Alliance Gathering_ Attendence Data.xlsx" = "2025_alliance_appreciation_event.xlsx",
   "2025 Alliance Engagement Tracking.xlsx" = "2025_alliance_mobilization.xlsx",
-#  "2024 Alliance Data for Nate - Compilation of Engagements from Newsletters.xlsx" = "2024_alliance_engagements.xlsx",
-#  "SOCIAL DATA FROM SPROUT Relationships-Overview-Post-Count-2025-01-01-2025-11-19-1763493637.csv" = "2025_alliance_instagram.csv",
-#  "1.9.25 NEW Data - alliance data - disaggregation.xlsx" = "2024_alliance_disaggregation.xlsx",
-#  "1.9.25 NEW Data - Story Data.xlsx" = "2024_alliance_insta_stories.xlsx",
- # "1.9.25 NEW Data - Updated 2024 Alliance Data for Nate - Dash Hudson Instagram Posting Data.xlsx" = "2024_alliance_insta_posts.xlsx",
- # "2024 Leadership Summit - Athlete Attendees.xlsx" = "2024_leadership_summit.xlsx",
+"2025 POW Quorum Engagement-2025-11-24-07-25-38.xlsx" = "2025_petitions.xlsx",
 "2025 Reconciliation & Public Lands Campaigns - Alliance Contacts .xlsx" = "2025_reconciliation_pl_campaigns.xlsx",
 "SSOT - Reconciliation LTE_OPed Tracker.xlsx" = "2025_reconciliation_tracking.xlsx"
 )
@@ -225,20 +296,30 @@ for (file in excel_files) {
 csv_files <- list.files(data_folder, pattern = "\\.csv$", full.names = TRUE)
 csv_files
 
-# load data
+
+################################################################################
+### All 2024 athlete IDs (df_athlete_ids) and 2025 Athlete list (df_alliance_raw)
+################################################################################
+
 df_athlete_ids <-  read.csv(here("data",  "2024_us_active_alliance_members.csv")) %>% 
   clean_names() %>% 
   select(salesforce_id, first_name, last_name, alliance_type, alliance_group, facebook, instagram, twitter) %>% 
-  func_clean_names(df_name_corrections) %>% 
   mutate(
     full_name = paste(first_name, last_name)) %>% 
   filter(full_name != "229.0 NA") %>% 
+  mutate(full_name = standardize_name(full_name),
+         full_name = apply_manual_name_corrections(full_name, 
+                                                   field = "full_name",
+                                                   corrections_df = df_name_corrections),
+         first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
+         last_name  = str_extract(full_name, "\\S+$")) %>% 
   select(salesforce_id, full_name, first_name, last_name, everything())
 
+
 df_alliance_raw <- read.csv(here("data",  "2025_us_active_alliance_members.csv"), skip=9) %>% 
-  select(-NA.) %>% 
-  slice_head(n = -5) %>% 
-  clean_names() 
+  clean_names()
+
+
 
 
 
@@ -248,13 +329,33 @@ df_alliance_raw <- read.csv(here("data",  "2025_us_active_alliance_members.csv")
 ################################################################################
 
 df_alliance <- df_alliance_raw %>% 
+  # remove unecessary column
+  select(-na) %>% 
+  # There are two instances of Jenny Jurek. Keep only the first 
+  group_by(last_name) %>%
+  filter(
+    last_name != "Uehisa jurek" | row_number() == 1
+  ) %>%
+  ungroup() %>% 
+  # remove last five rows which are not valid data
+  slice_head(n = -5) %>% 
+  # standardize names
   mutate(
+      full_name = paste(first_name, last_name),
+      full_name = standardize_name(full_name),
+      full_name = apply_manual_name_corrections(full_name, 
+                                                field = "full_name",
+                                                corrections_df = df_name_corrections),
+      first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
+      last_name  = str_extract(full_name, "\\S+$"),
+    # clean up alliance groups
     alliance_group = trimws(alliance_group),
     alliance_group = na_if(alliance_group, "NA"),
     alliance_group = na_if(alliance_group, "<NA>"),
     alliance_group = na_if(alliance_group, "")
   ) %>%
-  filter(!alliance_group %in% c("Creative", "Science")) %>%
+  filter(!alliance_group %in% c("Creative", "Science"),
+         !first_name == "Tk") %>%
   drop_na(alliance_group) %>% 
   mutate(investment_level = case_when(
     investment_level == "Higher" ~ "low",
@@ -264,8 +365,6 @@ df_alliance <- df_alliance_raw %>%
     # Just going to assume these folks are low investment
     is.na(investment_level) ~ "low"),
   alliance_member_since = as.Date(alliance_member_since, format = "%m/%d/%Y")) %>% 
-# clean up names
-  func_clean_names(df_name_corrections) %>%
   # bring in salesforce ID for existing members
   left_join(df_athlete_ids %>% select(first_name, last_name, salesforce_id, instagram), by = c("first_name", "last_name")) %>% 
   # clean up instagram URLs for matching with the Dash-Hudson social data later
@@ -279,20 +378,13 @@ df_alliance <- df_alliance_raw %>%
   str_remove_all("/$") %>%  # Remove trailing slashes
   str_split(",\\s*") %>%  # Split by commas (with optional spaces)
   sapply(function(x) x[1]) %>%  # Take the first username
-  str_trim()  # Trim any extra whitespace
-) %>%
-  # # clean up a couple rows manually
-  mutate(
+  str_trim(),  # Trim any extra whitespace
+  # clean up a couple rows manually
     instagram_username = case_when(
       instagram_username == "captain calhoun" ~ "captaincalhoun",  # Adjust "captain calhoun"
       instagram_username == "jeaneecranemauzy@gmail.com" ~ NA_character_,  # Replace email with NA
-      TRUE ~ instagram_username)  # Keep all other values unchanged
-  ) %>%
-  mutate(
-    full_name = paste(first_name, last_name)
-  )  %>%
+      TRUE ~ instagram_username),  # Keep all other values unchanged
   # manually update some missing Instagram usernames
-  mutate(
     instagram_username = case_when(
       first_name == "Jeremy" & last_name == "Jones" ~ "jeremyjones",
       first_name == "Jessie" & last_name == "Diggins" ~ "jessiediggins",
@@ -326,6 +418,7 @@ df_alliance <- df_alliance_raw %>%
          mailing_zip_postal_code, mailing_state_province_text_only, instagram_username)
 
 
+
 x_2024athletes_not_in_2025 <- df_athlete_ids %>%
   anti_join(
     df_alliance,
@@ -336,16 +429,58 @@ x_2024athletes_not_in_2025 <- df_athlete_ids %>%
   )
 
 x_2025athletes_missing_ids <- df_alliance %>%
-  filter(is.na(salesforce_id) | salesforce_id == "") %>%
-  transmute(
-    alliance_name = paste(first_name, last_name)
-  )
+  filter(str_starts(salesforce_id, "x_")) 
 
 # Total US Alliance
 tot_us_athletes <- df_alliance %>% 
   summarize(unique_id_count = n_distinct(salesforce_id)) %>% 
   pull(unique_id_count)
 print(paste0("There are ", tot_us_athletes, " US Alliance members"))
+
+
+################################################################################
+### Reconciliation & Public Lands Campaigns
+################################################################################
+# grab only the PPL stuff
+df_pl_campaigns_raw <- read.csv(here("data",  "2025_reconciliation_pl_campaigns.csv"), header = T, stringsAsFactors = FALSE) %>% 
+  clean_names()
+
+df_pl_campaigns <- df_pl_campaigns_raw %>% 
+  slice_head(n=98) %>% 
+  select(first_name, last_name, social_campaign) %>% 
+  filter(!is.na(first_name)) %>% 
+  # break out moonrise collective and separate the names
+  mutate(
+    full_name = case_when(
+      first_name == "Moonrise Creative" ~
+        "Sierra Schlag, Katie Cooney, Sara Beam Robbins, Iz La Motte",
+      
+      is.na(last_name) ~
+        first_name,
+      
+      TRUE ~
+        paste(first_name, last_name)
+    )
+  ) %>%
+  separate_rows(full_name, sep = ",\\s*") %>% 
+  func_clean_names(df_name_corrections) %>% 
+  left_join(df_alliance %>% select(full_name, salesforce_id), by = "full_name") %>% 
+  filter(!is.na(salesforce_id)) %>% 
+  select(salesforce_id, full_name, social_campaign)
+
+
+
+# keep only OPEDS for Lindsy, Nick, Brody. All the rest are already represented in df_pr as format=="op-ed"
+df_opeds_other <- df_pl_campaigns_raw %>% 
+  filter(row_number() >= 120, 
+         !is.na(first_name)) %>% 
+  rename(full_name = first_name) %>%
+  select(full_name) %>% 
+  func_clean_names(df_name_corrections) %>% 
+  left_join(df_alliance %>% select(full_name, first_name, last_name, salesforce_id), by = "full_name") %>% 
+  mutate(format = "op-ed") %>% 
+  filter(full_name %in% c("Brody Leven", "Nick Russell", "Lynsey Dyer")) %>% 
+  select(full_name, format)
 
 
 ################################################################################
@@ -404,6 +539,7 @@ df_pr <- df_pr_raw %>%
   rename(full_name = alliance_member_s) %>% 
 
   full_join(df_opeds_raw, by = c("full_name", "date_clean", "format")) %>% 
+  bind_rows(df_opeds_other) %>% 
   # bring in the salesforce_id
   left_join(
     df_alliance %>% select(full_name, first_name, last_name, salesforce_id), 
@@ -428,6 +564,8 @@ df_pr <- df_pr_raw %>%
 ################################################################################
 ### AAA and Empowerment grants
 ################################################################################
+
+#### AAA grants tbd
 
 #### Empower grants
 df_grants_empower_raw <- read.csv(here("data",  "2025_empowerment_grants.csv"), header = T, stringsAsFactors = FALSE) %>% 
@@ -575,50 +713,60 @@ left_join(
   select(salesforce_id, first_name, last_name, insta_username, everything())
 
 
+
+
+
+# STORIES - tbd. Unclear what these are. 
+
+
 ################################################################################
-### Reconciliation & Public Lands Campaigns
+### Petitions
 ################################################################################
-# grab only the PPL stuff
-df_pl_campaigns_raw <- read.csv(here("data",  "2025_reconciliation_pl_campaigns.csv"), header = T, stringsAsFactors = FALSE) %>% 
+df_petitions_raw <- read.csv(here("data",  "2025_petitions.csv"), header = T, stringsAsFactors = FALSE, skip = 11) %>% 
   clean_names()
 
-df_pl_campaigns <- df_pl_campaigns_raw %>% 
-  slice_head(n=98) %>% 
-  select(first_name, last_name, social_campaign) %>% 
-  filter(!is.na(first_name)) %>% 
-  # break out moonrise collective and separate the names
+df_petitions <- df_petitions_raw %>%
+  select(-na) %>%
+  # drop all rows below where full_name=="Total", which is the Salesforce total row
+  filter(
+    row_number() < which(full_name == "Total")[1]
+  ) %>% 
+  # strip titles out of names
   mutate(
-    full_name = case_when(
-      first_name == "Moonrise Creative" ~
-        "Sierra Schlag, Katie Cooney, Sara Beam Robbins, Iz La Motte",
-      
-      is.na(last_name) ~
-        first_name,
-      
-      TRUE ~
-        paste(first_name, last_name)
+    full_name = str_trim(
+      str_remove(
+        full_name,
+        regex(
+          "^(mr|mrs|ms|miss|mx|dr)\\.?\\s+",
+          ignore_case = TRUE
+        )
+      )
     )
+  ) %>% 
+  # 1. Carry names downward within grouped blocks
+  fill(full_name, .direction = "down") %>%
+  # 2. Remove subtotal rows
+  filter(full_name != "Subtotal") %>%
+  # 3. Keep only real campaign rows
+  filter(!is.na(campaign_name)) %>%
+  # 4. Select + rename columns
+  transmute(
+    full_name,
+    campaign_name,
+    engagement_date = mdy(member_first_associated_date)
   ) %>%
-  separate_rows(full_name, sep = ",\\s*") %>% 
+  # 5. Enforce one row per participation
+  distinct() %>% 
   func_clean_names(df_name_corrections) %>% 
-  left_join(df_alliance %>% select(full_name, salesforce_id), by = "full_name") %>% 
-  filter(!is.na(salesforce_id)) %>% 
-  select(salesforce_id, full_name, social_campaign)
+  left_join(df_alliance %>% select(full_name, salesforce_id), by = "full_name")
 
 
-
-
-df_opeds_other <- df_pl_campaigns_raw %>% 
-  filter(row_number() >= 99)
-
-# keep only OPEDS for Lindsy, Nick, Brody
-# STORIES - tbd
 
 ################################################################################
 ### Combine dataframes
 ################################################################################
 
 
-anti_join(dupes_rm_newsletter_engagements, by = c("first_name", "last_name", "engagement_type", "engagement_date", "engagement_desc")) %>% 
+# anti_join(dupes_rm_newsletter_engagements, by = c("first_name", "last_name", "engagement_type", "engagement_date", "engagement_desc")) %>% 
   
 
