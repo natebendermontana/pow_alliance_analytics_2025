@@ -857,4 +857,4 @@ df_combined <- dplyr::bind_rows(df_appreciation_events,
                                 df_pl_campaigns,
                                 df_pr)
 
-
+write.csv(df_combined, here("plots_tables", "df_combined_for_POW_feedback.csv"))
