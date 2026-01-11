@@ -216,7 +216,7 @@ new_names <- c(
   # tbd
   
   # Social media (Instagram) posts
-  "SOCIAL DATA FROM SPROUT Relationships-Overview-Post-Count-2025-01-01-2025-11-19-1763493637.csv" = "2025_instagram_posts.csv"
+  "SOCIAL DATA FROM SPROUT Relationships-Overview-Post-Count-2025-01-01-2025-11-19-1763493637.csv" = "2025_instagram_posts.csv",
   
   # PR
   "PR Placements.xlsx" = "2025_pr_placements.csv",
@@ -238,28 +238,37 @@ new_names <- c(
   
 )
 
-# list Excel files in raw folder
-excel_files <- list.files(
+# get both Excel and CSV files
+input_files <- list.files(
   raw_data_folder,
-  pattern = "\\.xlsx$",
+  pattern = "\\.(xlsx|csv)$",
   full.names = TRUE
 )
 
-# convert Excel → CSV (rename only on output)
-for (file in excel_files) {
+for (file in input_files) {
+  
   raw_name <- basename(file)
+  
   csv_name <- if (raw_name %in% names(new_names)) {
     new_names[[raw_name]]
   } else {
-    sub("\\.xlsx$", ".csv", raw_name)
+    sub("\\.(xlsx|csv)$", ".csv", raw_name)
   }
+  
   csv_path <- file.path(clean_data_folder, csv_name)
-  data <- readxl::read_excel(file)
-  write.csv(data, csv_path, row.names = FALSE)
+  
+  if (grepl("\\.xlsx$", file, ignore.case = TRUE)) {
+    data <- readxl::read_excel(file)
+    write.csv(data, csv_path, row.names = FALSE)
+    
+  } else if (grepl("\\.csv$", file, ignore.case = TRUE)) {
+    data <- read.csv(file, stringsAsFactors = FALSE)
+    write.csv(data, csv_path, row.names = FALSE)
+  }
+  
   cat("Created/updated CSV:", csv_path, "\n")
 }
 
-# return vector of CSVs now in clean folder
 csv_files <- list.files(
   clean_data_folder,
   pattern = "\\.csv$",
@@ -696,9 +705,6 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
       salesforce_id
     )) %>% 
   select(salesforce_id, full_name, first_name, last_name, engagement_type, date_clean, full_name, campaign_name, status, department)
-
-df_newsletters_engagements %>% filter(salesforce_id=="non-athlete") %>% View()
-
 
 
 ################################################################################
