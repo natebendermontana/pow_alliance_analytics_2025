@@ -611,12 +611,26 @@ df_appreciation_events <- df_appreciation_events_raw %>%
   ) %>% 
   rename(full_name = contact) %>% 
   filter(!is.na(full_name)) %>% 
-  func_clean_names(df_name_corrections) %>% 
+  mutate(engagement_type = "appreciation_events",
+         full_name = standardize_name(full_name),
+         full_name = apply_manual_name_corrections(full_name, 
+                                                   field = "full_name",
+                                                   corrections_df = df_name_corrections),
+         first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
+         last_name  = str_extract(full_name, "\\S+$")
+  ) %>% 
   left_join(
     df_2025_alliance %>% select(full_name, salesforce_id), 
     by = c("full_name") 
   ) %>% 
-  select(salesforce_id, full_name, event_name)
+  mutate(
+    # treat those with NA salesforce_id as non-athletes, to be counted and removed later
+    salesforce_id = if_else(
+      is.na(salesforce_id) | str_trim(salesforce_id) == "",
+      "non-athlete",
+      salesforce_id
+    )) %>% 
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, event_name)
 
 
 ################################################################################
