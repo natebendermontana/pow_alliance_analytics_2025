@@ -64,22 +64,96 @@ df_name_corrections <- tribble(
 
 
 
-
-
-
-
 ################################################################################
 # Functions
 ################################################################################
+
+func_clean_date <- function(x) {
+  
+  x_orig <- x
+  x <- as.character(x)
+  x <- trimws(x)
+  
+  out <- rep(as.Date(NA), length(x))
+  
+  # ---- 0. Already valid ISO ----
+  iso_idx <- grepl("^\\d{4}-\\d{2}-\\d{2}$", x)
+  if (any(iso_idx)) {
+    out[iso_idx] <- as.Date(x[iso_idx])
+  }
+  
+  # ---- 1. Excel serial dates ----
+  excel_idx <- is.na(out) & grepl("^[0-9]+(\\.0+)?$", x)
+  if (any(excel_idx)) {
+    nums <- as.numeric(sub("\\.0+$", "", x[excel_idx]))
+    out[excel_idx] <- as.Date(nums, origin = "1899-12-30")
+  }
+  
+  # ---- 2. Date ranges: take first date ----
+  range_idx <- is.na(out) & grepl("/", x) & grepl("-", x)
+  if (any(range_idx)) {
+    rng <- gsub("//", "/", x[range_idx])
+    
+    year <- sub(".*([0-9]{2,4})$", "\\1", rng)
+    year <- ifelse(nchar(year) == 2, paste0("20", year), year)
+    
+    mmdd <- sub("-.*", "", rng)
+    mmdd_full <- ifelse(
+      grepl("[0-9]{4}$", mmdd),
+      mmdd,
+      paste0(mmdd, "/", year)
+    )
+    
+    parsed <- suppressWarnings(as.Date(mmdd_full, format = "%m/%d/%Y"))
+    out[range_idx] <- parsed
+  }
+  
+  # ---- 3. Comma-separated lists: take first date ----
+  list_idx <- is.na(out) & grepl(",", x)
+  if (any(list_idx)) {
+    vals <- x[list_idx]
+    first_part <- sub(",.*", "", vals)
+    year <- sub(".*([0-9]{4}).*", "\\1", vals)
+    composed <- paste0(first_part, "/", year)
+    parsed <- suppressWarnings(as.Date(composed, format = "%m/%d/%Y"))
+    out[list_idx] <- parsed
+  }
+  
+  # ---- 4. Broken slashes ----
+  broken_idx <- is.na(out) & grepl("//", x)
+  if (any(broken_idx)) {
+    fixed <- gsub("//", "/", x[broken_idx])
+    parsed <- suppressWarnings(as.Date(fixed, format = "%m/%d/%Y"))
+    out[broken_idx] <- parsed
+  }
+  
+  # ---- 5. General parsing via lubridate ----
+  remain <- is.na(out)
+  if (any(remain)) {
+    parsed <- lubridate::parse_date_time(
+      x[remain],
+      orders = c(
+        "ymd", "y-m-d",
+        "mdy", "m/d/y",
+        "B d, Y", "B d Y",
+        "B d",
+        "m/d", "m/d,Y"
+      ),
+      tz = "UTC",
+      quiet = TRUE
+    )
+    out[remain] <- as.Date(parsed)
+  }
+  
+  out
+}
 
 standardize_name <- function(x) {
   x %>%
     # ensure character
     as.character() %>%
-    
     # trim leading/trailing whitespace
     str_trim() %>%
-    
     # remove titles at start
     str_remove(
       regex(
@@ -87,16 +161,12 @@ standardize_name <- function(x) {
         ignore_case = TRUE
       )
     ) %>%
-    
     # replace non-letter characters (but KEEP accented letters)
     str_replace_all("[^\\p{L}'\\s]", " ") %>%
-    
     # collapse multiple spaces
     str_squish() %>%
-    
     # lowercase everything
     str_to_lower() %>%
-    
     # capitalize first letter of each word
     str_replace_all(
       "\\b[a-z]",
@@ -130,40 +200,72 @@ apply_manual_name_corrections <- function(x, field, corrections_df) {
 ################################################################################
 # Clean up filenames and load data
 ################################################################################
-data_folder <- here("data/")
-files <- list.files(data_folder)
-files
+raw_data_folder   <- here("data", "raw")
+clean_data_folder <- here("data", "clean")
 
 new_names <- c(
-  "POW Empowerment Grant  (Responses).xlsx" = "2025_empowerment_grants.xlsx",
-  "PR Placements.xlsx" = "2025_pr_placements.xlsx",
-  "All Athlete, Creative, Science Alliances-2025-11-18-10-42-41.xlsx" = "2025_us_active_alliance_members.xlsx",
-  "2025 Alliance Gathering_ Attendence Data.xlsx" = "2025_alliance_appreciation_event.xlsx",
-  "2025 Alliance Engagement Tracking.xlsx" = "2025_alliance_mobilization.xlsx",
-"2025 POW Quorum Engagement-2025-11-24-07-25-38.xlsx" = "2025_petitions.xlsx",
-"2025 Reconciliation & Public Lands Campaigns - Alliance Contacts .xlsx" = "2025_reconciliation_pl_campaigns.xlsx",
-"SSOT - Reconciliation LTE_OPed Tracker.xlsx" = "2025_reconciliation_tracking.xlsx"
+  # 2024 athlete data already in clean folder
+  
+  # 2025 athletes
+  "All Athlete, Creative, Science Alliances-2025-11-18-10-42-41.xlsx" = "2025_us_active_alliance_members.csv",
+  
+  # Grants - Empowerment
+  "POW Empowerment Grant  (Responses).xlsx" = "2025_empowerment_grants.csv",
+  
+  # Grants - AAA
+  # tbd
+  
+  # Social media (Instagram) posts
+  "SOCIAL DATA FROM SPROUT Relationships-Overview-Post-Count-2025-01-01-2025-11-19-1763493637.csv" = "2025_instagram_posts.csv"
+  
+  # PR
+  "PR Placements.xlsx" = "2025_pr_placements.csv",
+  
+  # POW gatherings
+  "2025 Alliance Gathering_ Attendence Data.xlsx" = "2025_alliance_appreciation_event.csv",
+  
+  # Newsletters
+  "2025 Alliance Engagement Tracking.xlsx" = "2025_alliance_newsletters.csv",
+  
+  # Petitions
+  "2025 POW Quorum Engagement-2025-11-24-07-25-38.xlsx" = "2025_petitions.csv",
+  
+  # Public Lands Campaigns
+  "2025 Reconciliation & Public Lands Campaigns - Alliance Contacts .xlsx" = "2025_reconciliation_pl_campaigns.csv",
+  
+  # PR - Op Eds
+  "SSOT - Reconciliation LTE_OPed Tracker.xlsx" = "2025_pr_opeds.csv"
+  
 )
 
-for (old_name in names(new_names)) {
-  file.rename(
-    from = file.path(data_folder, old_name),
-    to = file.path(data_folder, new_names[old_name])
-  )
-}
+# list Excel files in raw folder
+excel_files <- list.files(
+  raw_data_folder,
+  pattern = "\\.xlsx$",
+  full.names = TRUE
+)
 
-excel_files <- list.files(data_folder, pattern = "\\.xlsx$", full.names = TRUE)
-
-# Convert Excel → CSV, overwrite allowed if CSV already exists
+# convert Excel → CSV (rename only on output)
 for (file in excel_files) {
-  csv_file <- sub("\\.xlsx$", ".csv", file)
+  raw_name <- basename(file)
+  csv_name <- if (raw_name %in% names(new_names)) {
+    new_names[[raw_name]]
+  } else {
+    sub("\\.xlsx$", ".csv", raw_name)
+  }
+  csv_path <- file.path(clean_data_folder, csv_name)
   data <- readxl::read_excel(file)
-  write.csv(data, csv_file, row.names = FALSE)
-  cat("Created/updated CSV:", csv_file, "\n")
+  write.csv(data, csv_path, row.names = FALSE)
+  cat("Created/updated CSV:", csv_path, "\n")
 }
 
-# Just return a vector of CSVs that now exist
-csv_files <- list.files(data_folder, pattern = "\\.csv$", full.names = TRUE)
+# return vector of CSVs now in clean folder
+csv_files <- list.files(
+  clean_data_folder,
+  pattern = "\\.csv$",
+  full.names = TRUE
+)
+
 csv_files
 
 
@@ -171,7 +273,7 @@ csv_files
 ### All 2024 athlete IDs (df_2024_athlete_ids) and 2025 Athlete list (df_2025_alliance_raw)
 ################################################################################
 
-df_2024_athlete_ids <-  read.csv(here("data",  "2024_us_active_alliance_members.csv")) %>% 
+df_2024_athlete_ids <-  read.csv(here("data", "clean",  "2024_us_active_alliance_members.csv")) %>% 
   clean_names() %>% 
   select(salesforce_id, first_name, last_name, alliance_type, alliance_group, facebook, instagram, twitter) %>% 
   mutate(
@@ -186,7 +288,7 @@ df_2024_athlete_ids <-  read.csv(here("data",  "2024_us_active_alliance_members.
   select(salesforce_id, full_name, first_name, last_name, everything())
 
 
-df_2025_alliance_raw <- read.csv(here("data",  "2025_us_active_alliance_members.csv"), skip=9) %>% 
+df_2025_alliance_raw <- read.csv(here("data", "clean",  "2025_us_active_alliance_members.csv"), skip=9) %>% 
   clean_names()
 
 
@@ -252,7 +354,7 @@ df_2025_alliance <- df_2025_alliance_raw %>%
   # clean up a couple rows manually
     instagram_username = case_when(
       instagram_username == "captain calhoun" ~ "captaincalhoun",  # Adjust "captain calhoun"
-      instagram_username == "jeaneecranemauzy@gmail.com" ~ NA_character_,  # Replace email with NA
+      instagram_username == "jeaneecranemauzy@gmail.com" ~ "jeaneecranemauzy",  # Replace email with NA
       TRUE ~ instagram_username),  # Keep all other values unchanged
   # manually update some missing Instagram usernames
     instagram_username = case_when(
@@ -310,7 +412,7 @@ print(paste0("There are ", tot_us_athletes, " US Alliance members"))
 ### Reconciliation & Public Lands Campaigns
 ################################################################################
 # grab only the PPL stuff
-df_pl_campaigns_raw <- read.csv(here("data",  "2025_reconciliation_pl_campaigns.csv"), header = T, stringsAsFactors = FALSE) %>% 
+df_pl_campaigns_raw <- read.csv(here("data", "clean",  "2025_reconciliation_pl_campaigns.csv"), header = T, stringsAsFactors = FALSE) %>% 
   clean_names()
 
 df_pl_campaigns <- df_pl_campaigns_raw %>% 
@@ -373,10 +475,10 @@ df_opeds_other <- df_pl_campaigns_raw %>%
 ### PR Placements
 ################################################################################
 
-df_pr_raw <- read.csv(here("data",  "2025_pr_placements.csv"), skip = 2) %>% 
+df_pr_raw <- read.csv(here("data", "clean",  "2025_pr_placements.csv"), skip = 2) %>% 
   clean_names() 
 
-df_opeds_raw <- read.csv(here("data", "2025_reconciliation_tracking.csv")) %>% 
+df_opeds_raw <- read.csv(here("data", "clean", "2025_pr_opeds.csv")) %>% 
   clean_names() %>% 
   filter(alliance=="Athlete Alliance") %>% 
   rename(full_name = name) %>%
@@ -475,7 +577,7 @@ df_pr <- df_pr_raw %>%
 #### AAA grants tbd
 
 #### Empower grants
-df_grants_empower_raw <- read.csv(here("data",  "2025_empowerment_grants.csv"), header = T, stringsAsFactors = FALSE) %>% 
+df_grants_empower_raw <- read.csv(here("data", "clean",  "2025_empowerment_grants.csv"), header = T, stringsAsFactors = FALSE) %>% 
   clean_names()
 
 df_grants_empower <- df_grants_empower_raw %>% 
@@ -545,7 +647,7 @@ df_grants_all <- df_grants_empower %>%
 ################################################################################
 ### Newsletters - general engagements
 ################################################################################
-df_newsletters_engagements_raw <- read.csv(here("data",  "2025_alliance_mobilization.csv"), header = T, stringsAsFactors = FALSE) %>% 
+df_newsletters_engagements_raw <- read.csv(here("data", "clean",  "2025_alliance_newsletters.csv"), header = T, stringsAsFactors = FALSE) %>% 
   clean_names()
 
 df_newsletters_engagements <- df_newsletters_engagements_raw %>%
@@ -602,7 +704,7 @@ df_newsletters_engagements %>% filter(salesforce_id=="non-athlete") %>% View()
 ################################################################################
 ### Alliance Appreciation Events
 ################################################################################
-df_appreciation_events_raw <- read.csv(here("data",  "2025_alliance_appreciation_event.csv"), header = T, stringsAsFactors = FALSE) %>% 
+df_appreciation_events_raw <- read.csv(here("data", "clean",  "2025_alliance_appreciation_event.csv"), header = T, stringsAsFactors = FALSE) %>% 
   clean_names()
 
 df_appreciation_events <- df_appreciation_events_raw %>% 
@@ -636,7 +738,7 @@ df_appreciation_events <- df_appreciation_events_raw %>%
 ################################################################################
 ### Social Media
 ################################################################################
-df_socials_raw <- read.csv(here("data",  "SOCIAL DATA FROM SPROUT Relationships-Overview-Post-Count-2025-01-01-2025-11-19-1763493637.csv"), header = T, stringsAsFactors = FALSE) %>% 
+df_socials_raw <- read.csv(here("data", "clean",  "2025_instagram_posts.csv"), header = T, stringsAsFactors = FALSE) %>% 
   clean_names()
 
 cols_to_rename <- c("username",
@@ -657,8 +759,8 @@ df_socials <- df_socials_raw %>%
                 str_replace_all("(?i)you", "pow") %>%    
                 str_replace_all("__", "_") %>% 
                 str_replace_all("_$", "")) %>% #remove trailing underscores   
-  # second rename_with call separated from the first for readability. This one prefixes "insta_" onto all the relevant cols
-  # so analysis later is easier. 
+  # second rename_with call separated from the first for readability. 
+  # This one prefixes "insta_" onto all the relevant cols so later analysis is easier. 
   rename_with(
     .fn = ~ paste0("insta_", .),
     .cols = all_of(cols_to_rename)
@@ -675,8 +777,19 @@ left_join(
   df_2025_alliance %>% select(salesforce_id, first_name, last_name, instagram_username),
   by = c("insta_username" = "instagram_username")
 ) %>% 
+  mutate(full_name = paste(first_name, last_name)) %>% 
+  # remove the existing first and last names; these will be re-created after standardization
+  select(-first_name, -last_name) %>% 
+  mutate(engagement_type = "social_posts",
+         full_name = standardize_name(full_name),
+         full_name = apply_manual_name_corrections(full_name, 
+                                                   field = "full_name",
+                                                   corrections_df = df_name_corrections),
+         first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
+         last_name  = str_extract(full_name, "\\S+$")
+  ) %>% 
   select(-relationship_tags) %>% 
-  select(salesforce_id, first_name, last_name, insta_username, everything())
+  select(salesforce_id, full_name, first_name, last_name, insta_username, everything())
 
 
 
@@ -688,7 +801,7 @@ left_join(
 ################################################################################
 ### Petitions
 ################################################################################
-df_petitions_raw <- read.csv(here("data",  "2025_petitions.csv"), header = T, stringsAsFactors = FALSE, skip = 11) %>% 
+df_petitions_raw <- read.csv(here("data", "clean",  "2025_petitions.csv"), header = T, stringsAsFactors = FALSE, skip = 11) %>% 
   clean_names()
 
 df_petitions <- df_petitions_raw %>%
@@ -698,33 +811,34 @@ df_petitions <- df_petitions_raw %>%
     row_number() < which(full_name == "Total")[1]
   ) %>% 
   # strip titles out of names
-  mutate(
-    full_name = str_trim(
-      str_remove(
-        full_name,
-        regex(
-          "^(mr|mrs|ms|miss|mx|dr)\\.?\\s+",
-          ignore_case = TRUE
-        )
-      )
-    )
-  ) %>% 
+  mutate(engagement_type = "petitions",
+         full_name = standardize_name(full_name),
+         full_name = apply_manual_name_corrections(full_name, 
+                                                   field = "full_name",
+                                                   corrections_df = df_name_corrections)
+         ) %>% 
   # 1. Carry names downward within grouped blocks
   fill(full_name, .direction = "down") %>%
   # 2. Remove subtotal rows
   filter(full_name != "Subtotal") %>%
   # 3. Keep only real campaign rows
   filter(!is.na(campaign_name)) %>%
-  # 4. Select + rename columns
-  transmute(
-    full_name,
-    campaign_name,
-    engagement_date = mdy(member_first_associated_date)
-  ) %>%
   # 5. Enforce one row per participation
   distinct() %>% 
-  func_clean_names(df_name_corrections) %>% 
-  left_join(df_2025_alliance %>% select(full_name, salesforce_id), by = "full_name")
+  left_join(df_2025_alliance %>% select(full_name, salesforce_id), by = "full_name") %>% 
+  mutate(
+    engagement_date = mdy(member_first_associated_date),
+    # Bring in first and last name now that full_name has been cleaned and fill() filled down to each row for ppl 
+    # who have multiple engagements
+    first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
+    last_name  = str_extract(full_name, "\\S+$"),
+    # treat those with NA salesforce_id as non-athletes, to be counted and removed later
+    salesforce_id = if_else(
+      is.na(salesforce_id) | str_trim(salesforce_id) == "",
+      "non-athlete",
+      salesforce_id
+    )) %>% 
+  select(salesforce_id, full_name, first_name, last_name, campaign_name, engagement_type, engagement_date)
 
 
 
