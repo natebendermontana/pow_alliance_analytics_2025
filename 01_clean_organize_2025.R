@@ -246,17 +246,13 @@ input_files <- list.files(
 )
 
 for (file in input_files) {
-  
   raw_name <- basename(file)
-  
   csv_name <- if (raw_name %in% names(new_names)) {
     new_names[[raw_name]]
   } else {
     sub("\\.(xlsx|csv)$", ".csv", raw_name)
   }
-  
   csv_path <- file.path(clean_data_folder, csv_name)
-  
   if (grepl("\\.xlsx$", file, ignore.case = TRUE)) {
     data <- readxl::read_excel(file)
     write.csv(data, csv_path, row.names = FALSE)
@@ -265,7 +261,6 @@ for (file in input_files) {
     data <- read.csv(file, stringsAsFactors = FALSE)
     write.csv(data, csv_path, row.names = FALSE)
   }
-  
   cat("Created/updated CSV:", csv_path, "\n")
 }
 
@@ -299,10 +294,6 @@ df_2024_athlete_ids <-  read.csv(here("data", "clean",  "2024_us_active_alliance
 
 df_2025_alliance_raw <- read.csv(here("data", "clean",  "2025_us_active_alliance_members.csv"), skip=9) %>% 
   clean_names()
-
-
-
-
 
 
 ################################################################################
@@ -458,15 +449,17 @@ df_pl_campaigns <- df_pl_campaigns_raw %>%
       "non-athlete",
       salesforce_id
     ),
-    engagement_type = "pl_campaign"
+    engagement_type = "pl_campaign",
+    engagement_date = NA_Date_,
   ) %>% 
+  rename(engagement_desc = social_campaign) %>% 
   filter(!is.na(salesforce_id)) %>% 
-  select(salesforce_id, full_name, first_name, last_name, social_campaign, engagement_type)
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_desc, engagement_date)
 
 
 
 # keep only OPEDS for Lindsy, Nick, Brody. All the rest are already represented in df_pr as format=="op-ed"
-df_opeds_other <- df_pl_campaigns_raw %>% 
+df_pr_opeds_other <- df_pl_campaigns_raw %>% 
   filter(row_number() >= 120, 
          !is.na(first_name)) %>% 
   rename(full_name = first_name) %>%
@@ -479,7 +472,6 @@ df_opeds_other <- df_pl_campaigns_raw %>%
   filter(full_name %in% c("Brody Leven", "Nick Russell", "Lynsey Dyer")) %>% 
   select(full_name, format)
 
-
 ################################################################################
 ### PR Placements
 ################################################################################
@@ -487,7 +479,7 @@ df_opeds_other <- df_pl_campaigns_raw %>%
 df_pr_raw <- read.csv(here("data", "clean",  "2025_pr_placements.csv"), skip = 2) %>% 
   clean_names() 
 
-df_opeds_raw <- read.csv(here("data", "clean", "2025_pr_opeds.csv")) %>% 
+df_pr_opeds_raw <- read.csv(here("data", "clean", "2025_pr_opeds.csv")) %>% 
   clean_names() %>% 
   filter(alliance=="Athlete Alliance") %>% 
   rename(full_name = name) %>%
@@ -498,17 +490,17 @@ df_opeds_raw <- read.csv(here("data", "clean", "2025_pr_opeds.csv")) %>%
                                               corrections_df = df_name_corrections),
     first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
     last_name  = str_extract(full_name, "\\S+$"),
-    date_clean = func_clean_date(lte_date_submission),
+    engagement_date = func_clean_date(lte_date_submission),
     type = type,
     format = "op-ed") %>% 
-  select(full_name, format, date_clean)
+  select(full_name, format, engagement_date)
   
 df_pr <- df_pr_raw %>%
   select(-na) %>%
   drop_na(date) %>% 
   mutate(
-    date_clean = str_replace(date, "Late 2025", "December 2025"),
-    date_clean = func_clean_date(date_clean)
+    engagement_date = str_replace(date, "Late 2025", "December 2025"),
+    engagement_date = func_clean_date(engagement_date)
     ) %>% 
   # split on semicolons first
   mutate(alliance_member_s = str_split(alliance_member_s, ";")) %>%
@@ -545,8 +537,8 @@ df_pr <- df_pr_raw %>%
                                               field = "full_name",
                                               corrections_df = df_name_corrections)) %>% 
   
-  full_join(df_opeds_raw, by = c("full_name", "date_clean", "format")) %>% 
-  bind_rows(df_opeds_other) %>% 
+  full_join(df_pr_opeds_raw, by = c("full_name", "engagement_date", "format")) %>% 
+  bind_rows(df_pr_opeds_other) %>% 
   # bring in the salesforce_id
   left_join(
     df_2025_alliance %>% select(full_name, first_name, last_name, salesforce_id), 
@@ -558,9 +550,9 @@ df_pr <- df_pr_raw %>%
     last_name  = str_extract(full_name, "\\S+$"),
     engagement_type = "pr",
     quarter = if_else(
-      is.na(date_clean),
+      is.na(engagement_date),
       NA_character_,
-      paste0("Q", lubridate::quarter(date_clean))
+      paste0("Q", lubridate::quarter(engagement_date))
     ),
   # treat those with NA salesforce_id as non-athletes, to be counted and removed later
     salesforce_id = if_else(
@@ -569,13 +561,13 @@ df_pr <- df_pr_raw %>%
       salesforce_id
     )
   ) %>% 
+  rename(engagement_desc = format) %>% 
   # remove the non-athlete PR mentions
 #  filter(
     # DO WE WANT TO REMOVE THESE "MULTIPLE" RECORDS?
 #    !full_name == "Multiple"
 #  ) %>% 
-  select(salesforce_id, first_name, last_name, full_name, status, outlet, format, date_clean, quarter, engagement_type)
-
+  select(salesforce_id, first_name, last_name, full_name, status, engagement_type, engagement_desc, engagement_date, quarter)
 
 
 
@@ -593,7 +585,8 @@ df_grants_empower <- df_grants_empower_raw %>%
   select(name, pow_alliance, date, grant_purpose) %>% 
   filter(!pow_alliance %in% c("Science", "Creative"),
          !is.na(name)) %>% 
-  rename(full_name = name) %>% 
+  rename(full_name = name,
+         engagement_desc = grant_purpose) %>% 
   mutate(
     full_name = standardize_name(full_name),
     full_name = apply_manual_name_corrections(full_name, 
@@ -602,7 +595,7 @@ df_grants_empower <- df_grants_empower_raw %>%
     first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
     last_name  = str_extract(full_name, "\\S+$"),
     engagement_type = "grant_empowerment",
-    date_clean = func_clean_date(date)
+    engagement_date = func_clean_date(date)
     ) %>% 
   # bring in the salesforce_id
   left_join(
@@ -616,7 +609,7 @@ df_grants_empower <- df_grants_empower_raw %>%
     "non-athlete",
     salesforce_id
     )) %>% 
-  select(salesforce_id, full_name, first_name, last_name, grant_purpose, engagement_type, date_clean)
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_desc, engagement_date)
 
 df_grants_rapidresponse <- df_grants_empower_raw %>% 
   slice_tail(n = 1) %>% 
@@ -632,8 +625,8 @@ df_grants_rapidresponse <- df_grants_empower_raw %>%
                                                 corrections_df = df_name_corrections),
       first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
       last_name  = str_extract(full_name, "\\S+$"),
-    grant_purpose = NA,
-    date_clean = NA
+    engagement_desc = NA,
+    engagement_date = NA
   ) %>% 
   # bring in the salesforce_id
   left_join(
@@ -647,10 +640,11 @@ df_grants_rapidresponse <- df_grants_empower_raw %>%
       "non-athlete",
       salesforce_id
     )) %>% 
-  select(salesforce_id, full_name, first_name, last_name, engagement_type, grant_purpose, date_clean)
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_desc, engagement_date)
 
 df_grants_all <- df_grants_empower %>% 
   rbind(df_grants_rapidresponse)
+
 
 
 ################################################################################
@@ -661,10 +655,10 @@ df_newsletters_engagements_raw <- read.csv(here("data", "clean",  "2025_alliance
 
 df_newsletters_engagements <- df_newsletters_engagements_raw %>%
     mutate(
-      date_clean = func_clean_date(start_end_date)
+      engagement_date = func_clean_date(start_end_date)
     ) %>% 
   ### DO WE WANT TO FILTER TO ONLY "DONE" STATUS? 
-  filter(status == "Done") %>% 
+#  filter(status == "Done") %>% 
   # split the athlete names column on semicolons first
   mutate(athlete_s = str_split(athlete_s, ",")) %>%
   unnest(athlete_s) %>%
@@ -704,7 +698,8 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
       "non-athlete",
       salesforce_id
     )) %>% 
-  select(salesforce_id, full_name, first_name, last_name, engagement_type, date_clean, full_name, campaign_name, status, department)
+  rename(engagement_desc = campaign_name) %>% 
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_date, full_name, engagement_desc, status, department)
 
 
 ################################################################################
@@ -717,7 +712,8 @@ df_appreciation_events <- df_appreciation_events_raw %>%
   mutate(
     event_name = stringr::str_replace(event_name, "^.*?:\\s*", "")
   ) %>% 
-  rename(full_name = contact) %>% 
+  rename(full_name = contact,
+         engagement_desc = event_name) %>% 
   filter(!is.na(full_name)) %>% 
   mutate(engagement_type = "appreciation_events",
          full_name = standardize_name(full_name),
@@ -738,7 +734,7 @@ df_appreciation_events <- df_appreciation_events_raw %>%
       "non-athlete",
       salesforce_id
     )) %>% 
-  select(salesforce_id, full_name, first_name, last_name, engagement_type, event_name)
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_desc)
 
 
 ################################################################################
@@ -844,7 +840,8 @@ df_petitions <- df_petitions_raw %>%
       "non-athlete",
       salesforce_id
     )) %>% 
-  select(salesforce_id, full_name, first_name, last_name, campaign_name, engagement_type, engagement_date)
+  rename(engagement_desc = campaign_name) %>% 
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_desc, engagement_date)
 
 
 
@@ -853,6 +850,11 @@ df_petitions <- df_petitions_raw %>%
 ################################################################################
 
 
-# anti_join(dupes_rm_newsletter_engagements, by = c("first_name", "last_name", "engagement_type", "engagement_date", "engagement_desc")) %>% 
-  
+df_combined <- dplyr::bind_rows(df_appreciation_events,
+                                df_grants_all,
+                                df_newsletters_engagements,
+                                df_petitions,
+                                df_pl_campaigns,
+                                df_pr)
+
 
