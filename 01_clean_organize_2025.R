@@ -57,9 +57,12 @@ df_name_corrections <- tribble(
   "full_name", "Mikey Schafer",               "Mikey Schaefer",
   "full_name", "Caroline Geich",               "Caroline Gleich",
   "full_name", "Sarah Strum",               "Sarah Sturm",
-  "full_name", "Cody Cirollo",               "Cody Cirillo"
-  
+  "full_name", "Cody Cirollo",               "Cody Cirillo",
+  "full_name", "Stephanie Howe",               "Stéphanie Howe",
+  "full_name", "Steph Howe",               "Stéphanie Howe",
+  "full_name", "Connor Phelan",               "Conor Phelan"
 )
+
 
 
 
@@ -213,7 +216,7 @@ new_names <- c(
   "POW Empowerment Grant  (Responses).xlsx" = "2025_empowerment_grants.csv",
   
   # Grants - AAA
-  # tbd
+  # Graham provided this data inline in an email.
   
   # Social media (Instagram) posts
   "SOCIAL DATA FROM SPROUT Relationships-Overview-Post-Count-2025-01-01-2025-11-19-1763493637.csv" = "2025_instagram_posts.csv",
@@ -300,6 +303,18 @@ df_2025_alliance_raw <- read.csv(here("data", "clean",  "2025_us_active_alliance
 ### Total US Athlete Alliance Members
 ################################################################################
 
+# some athletes are missing accidentally from the 2025 athlete list. Adding them manually
+new_rows <- tibble(
+  full_name          = c("Jared Campbell", "Josh Garrigues", "Tommy Ford", "Zachary Hammer"),
+  first_name         = c("Jared", "Josh", "Tommy", "Zachary"),
+  last_name          = c("Campbell", "Garrigues", "Ford", "Hammer"),
+  investment_level   = c("med", "low", "low", "med"),
+  alliance_group     = c("Run", "Climb", "Ski", "Climb"),
+  alliance_status    = rep("Official Member", 4)
+)
+
+set.seed(01242025)
+
 df_2025_alliance <- df_2025_alliance_raw %>% 
   # remove unecessary column
   select(-na) %>% 
@@ -368,7 +383,9 @@ df_2025_alliance <- df_2025_alliance_raw %>%
       first_name == "Alyssa" & last_name == "Gonzalez" ~ "_alyssagonzalez",
       TRUE ~ instagram_username
     )
-  ) %>% 
+  ) %>%
+  # Manually add a few folks to the 2025 athlete list that Graham and Abbey identified as missing
+  bind_rows(new_rows) %>% 
   # create new salesforce IDs for any rows that do not have them for whatever reason
   mutate(
     salesforce_id = if_else(
@@ -495,6 +512,7 @@ df_pr_opeds_raw <- read.csv(here("data", "clean", "2025_pr_opeds.csv")) %>%
     format = "op-ed") %>% 
   select(full_name, format, engagement_date)
   
+# Keep both the "upcoming" and "confirmed status types
 df_pr <- df_pr_raw %>%
   select(-na) %>%
   drop_na(date) %>% 
@@ -575,7 +593,41 @@ df_pr <- df_pr_raw %>%
 ### AAA and Empowerment grants
 ################################################################################
 
-#### AAA grants tbd
+#### AAA grants
+df_grants_aaa <- tibble(
+  full_name       = c("Addie Thompson", "Dan Holz", "Liam Gallagher", "Nico Schiavone", "Drew Petersen"),
+  engagement_type = c("grant_aaa", "grant_aaa", "grant_aaa", "grant_aaa", "grant_aaa"),
+  engagement_desc = c(
+    "Climate Strides x NYC Climate Week",
+    "Beyond the Horizon",
+    "New Blue View",
+    "The Mind is the Environment",
+    "The Drew Petersen Podcast"
+  ),
+  engagement_date = rep(NA, 5)
+) %>% 
+  mutate(
+    full_name = standardize_name(full_name),
+    full_name = apply_manual_name_corrections(full_name, 
+                                              field = "full_name",
+                                              corrections_df = df_name_corrections)) %>% 
+  # bring in the salesforce_id
+  left_join(
+    df_2025_alliance %>% select(full_name, salesforce_id), 
+    by = c("full_name") 
+  ) %>% 
+  mutate(
+    # treat those with NA salesforce_id as non-athletes, to be counted and removed later
+    salesforce_id = if_else(
+      is.na(salesforce_id) | str_trim(salesforce_id) == "",
+      "non-athlete",
+      salesforce_id
+    ),
+    first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
+    last_name  = str_extract(full_name, "\\S+$")) %>% 
+  select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_desc, engagement_date)
+
+
 
 #### Empower grants
 df_grants_empower_raw <- read.csv(here("data", "clean",  "2025_empowerment_grants.csv"), header = T, stringsAsFactors = FALSE) %>% 
@@ -643,7 +695,7 @@ df_grants_rapidresponse <- df_grants_empower_raw %>%
   select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_desc, engagement_date)
 
 df_grants_all <- df_grants_empower %>% 
-  rbind(df_grants_rapidresponse)
+  rbind(df_grants_rapidresponse, df_grants_aaa)
 
 
 
@@ -657,8 +709,6 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
     mutate(
       engagement_date = func_clean_date(start_end_date)
     ) %>% 
-  ### DO WE WANT TO FILTER TO ONLY "DONE" STATUS? 
-#  filter(status == "Done") %>% 
   # split the athlete names column on semicolons first
   mutate(athlete_s = str_split(athlete_s, ",")) %>%
   unnest(athlete_s) %>%
@@ -674,6 +724,8 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
       full_name == "moderated by Addie Thompson"                   ~ "Addie Thompson",
       full_name == "Panel Speakers: Jeremy Jones"                   ~ "Jeremy Jones",
       full_name == "speakers: Science: Alex Lee"                   ~ "Alex Lee",
+      full_name == "Brody"                   ~ "Brody Leven",
+      
       TRUE                                                   ~ full_name
     ),
     # strip out any cases of "Dr. "
@@ -688,8 +740,7 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
          last_name  = str_extract(full_name, "\\S+$")
   ) %>% 
   # filter out Empowerment Grants - these are accounted for in df_grants_all
-  filter(department != "Empowerment Grant") %>% 
-
+#  filter(!department == "Empowerment Grant") %>% 
   left_join(df_2025_alliance %>% select(full_name, salesforce_id), by = "full_name") %>% 
   mutate(
     # treat those with NA salesforce_id as non-athletes, to be counted and removed later
@@ -699,6 +750,13 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
       salesforce_id
     )) %>% 
   rename(engagement_desc = campaign_name) %>% 
+  mutate(
+    status = case_when(
+      engagement_desc == "DC Lobby Day" ~ "Cancelled",
+      TRUE                              ~ status
+    )
+  ) %>%
+  filter(!status %in% c("Cancelled", "Canceled")) %>% 
   select(salesforce_id, full_name, first_name, last_name, engagement_type, engagement_date, full_name, engagement_desc, status, department)
 
 
@@ -798,7 +856,7 @@ left_join(
 
 
 # STORIES - tbd. Unclear what these are. 
-
+# Presumably Instagram stories. Ignoring for now. 
 
 ################################################################################
 ### Petitions
@@ -857,4 +915,66 @@ df_combined <- dplyr::bind_rows(df_appreciation_events,
                                 df_pl_campaigns,
                                 df_pr)
 
+
 write.csv(df_combined, here("plots_tables", "df_combined_for_POW_feedback.csv"))
+write.csv(x_2025athletes_not_in_2024, here("plots_tables", "2025athletes_not_in_2024.csv"))
+write.csv(x_2024athletes_not_in_2025, here("plots_tables", "2024athletes_not_in_2025.csv"))
+
+################################################################################
+### Compare cleaned df_combined dataset to Graham's edits to see which rows changed. 
+################################################################################
+
+# Clean up names. Pull in the original salesforce_id because I accidentally scrambled the ones in the
+# script now and they don't line up with the ones that are in the file of Graham's edits. 
+
+df_combined_edits <-  read.csv(here("data", "raw",  "df_combined_for_POW_feedback - GZ Edits.csv")) %>% 
+  clean_names() %>% 
+  select(-first_name, -last_name, -salesforce_id) %>% 
+  mutate(full_name = standardize_name(full_name),
+         full_name = apply_manual_name_corrections(full_name, 
+                                                   field = "full_name",
+                                                   corrections_df = df_name_corrections),
+         first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
+         last_name  = str_extract(full_name, "\\S+$")) %>% 
+  filter(!salesforce_id == "non-athlete") %>% 
+  mutate(across(everything(), as.character)) %>%
+  arrange(salesforce_id) %>%
+  mutate(row_index = row_number()) %>% 
+  select(-x) %>% 
+  select(row_index, everything())
+
+df_combined <- df_combined %>% 
+  filter(!salesforce_id == "non-athlete") %>% 
+  mutate(across(everything(), as.character)) %>%
+  arrange(salesforce_id) %>%
+  mutate(row_index = row_number()) %>% 
+  select(row_index, everything())
+
+df_joined <- df_combined_edits %>%
+  left_join(
+    df_combined,
+    by = c("salesforce_id", "row_index"),
+    suffix = c("", "_orig")
+  )
+
+df_changed <- df_joined %>%
+  rowwise() %>%
+  filter(
+    # Case 1: row did not exist in original
+    all(is.na(c_across(ends_with("_orig")))) |
+      
+      # Case 2: row exists but differs in any column
+      any(
+        c_across(-c(salesforce_id, row_index, ends_with("_orig"))) !=
+          c_across(ends_with("_orig")) |
+          xor(
+            is.na(c_across(-c(salesforce_id, row_index, ends_with("_orig")))),
+            is.na(c_across(ends_with("_orig")))
+          )
+      )
+  ) %>%
+  ungroup() %>%
+  select(-ends_with("_orig"), -row_index)
+
+df_combined %>% select(salesforce_id, full_name) %>%  filter(salesforce_id == "non-athlete") %>% View()
+
