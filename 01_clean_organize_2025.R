@@ -490,6 +490,19 @@ df_pr_opeds_other <- df_pl_campaigns_raw %>%
   filter(full_name %in% c("Brody Leven", "Nick Russell", "Lynsey Dyer")) %>% 
   select(full_name, format)
 
+# keep only OPEDS for Lindsy, Nick, Brody. All the rest are already represented in df_pr as format=="op-ed"
+df_pr_stories_other <- df_pl_campaigns_raw %>% 
+  filter(row_number() >= 99, 
+         !is.na(first_name)) %>% 
+  rename(full_name = first_name) %>%
+  mutate(
+    full_name = standardize_name(full_name),
+    full_name = apply_manual_name_corrections(full_name, 
+                                              field = "full_name",
+                                              corrections_df = df_name_corrections),
+    format = "stories") %>%
+  select(full_name, format)
+
 ################################################################################
 ### PR Placements
 ################################################################################
@@ -558,6 +571,7 @@ df_pr <- df_pr_raw %>%
   
   full_join(df_pr_opeds_raw, by = c("full_name", "engagement_date", "format")) %>% 
   bind_rows(df_pr_opeds_other) %>% 
+  bind_rows(df_pr_stories_other) %>% 
   # bring in the salesforce_id
   left_join(
     df_2025_alliance %>% select(full_name, first_name, last_name, salesforce_id), 
@@ -567,7 +581,7 @@ df_pr <- df_pr_raw %>%
   mutate(
     first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
     last_name  = str_extract(full_name, "\\S+$"),
-    engagement_type = "pr",
+    engagement_type = "pr_placement",
     quarter = if_else(
       is.na(engagement_date),
       NA_character_,
@@ -732,7 +746,7 @@ df_newsletters_engagements <- df_newsletters_engagements_raw %>%
     # strip out any cases of "Dr. "
     full_name = stringr::str_replace_all(full_name, "\\bDr\\.\\s*", "")
   ) %>% 
-  mutate(engagement_type = "newsletters",
+  mutate(engagement_type = "newsletters_engagement",
          full_name = standardize_name(full_name),
          full_name = apply_manual_name_corrections(full_name, 
                                                    field = "full_name",
@@ -774,7 +788,7 @@ df_appreciation_events <- df_appreciation_events_raw %>%
   rename(full_name = contact,
          engagement_desc = event_name) %>% 
   filter(!is.na(full_name)) %>% 
-  mutate(engagement_type = "appreciation_events",
+  mutate(engagement_type = "appreciation_event",
          full_name = standardize_name(full_name),
          full_name = apply_manual_name_corrections(full_name, 
                                                    field = "full_name",
@@ -841,7 +855,7 @@ left_join(
   mutate(full_name = paste(first_name, last_name)) %>% 
   # remove the existing first and last names; these will be re-created after standardization
   select(-first_name, -last_name) %>% 
-  mutate(engagement_type = "social_posts",
+  mutate(engagement_type = "instagram_post",
          full_name = standardize_name(full_name),
          full_name = apply_manual_name_corrections(full_name, 
                                                    field = "full_name",
@@ -917,7 +931,6 @@ df_combined <- dplyr::bind_rows(df_appreciation_events,
                                 df_pr)
 
 
-write.csv(df_combined, here("plots_tables", "df_combined_for_POW_feedback.csv"))
 write.csv(x_2025athletes_not_in_2024, here("plots_tables", "2025athletes_not_in_2024.csv"))
 write.csv(x_2024athletes_not_in_2025, here("plots_tables", "2024athletes_not_in_2025.csv"))
 
@@ -929,7 +942,7 @@ write.csv(x_2024athletes_not_in_2025, here("plots_tables", "2024athletes_not_in_
 # script now and they don't line up with the ones that are in the file of Graham's edits. 
 
 df_combined_edits <-  read.csv(here("data", "raw",  "df_combined_for_POW_feedback - GZ Edits.csv")) %>% 
-  clean_names() %>% 
+  clean_names() %>%
   select(-first_name, -last_name, -salesforce_id) %>% 
   mutate(full_name = standardize_name(full_name),
          full_name = apply_manual_name_corrections(full_name, 
@@ -940,13 +953,110 @@ df_combined_edits <-  read.csv(here("data", "raw",  "df_combined_for_POW_feedbac
   left_join(df_2025_alliance %>% select(full_name, salesforce_id), by = "full_name") %>% 
   # treat those with NA salesforce_id as non-athletes, to be counted and removed later
    filter(!salesforce_id == "non-athlete") %>% 
-  mutate(across(everything(), as.character)) %>%
-  arrange(salesforce_id) %>%
-  mutate(row_index = row_number()) %>% 
-  select(-x) %>% 
-  select(row_index, salesforce_id, everything())
+  bind_rows(df_socials) %>% 
+  select(-x)
+
+cols_to_add <- setdiff(
+  names(df_2025_alliance),
+  names(df_combined_edits)
+)
+
+df_new_alliance_only <- df_2025_alliance %>%
+  anti_join(
+    df_combined_edits %>% distinct(salesforce_id),
+    by = "salesforce_id"
+  ) %>% 
+  mutate(is_engagement=FALSE)
+
+df_combined_final <- df_combined_edits %>% 
+  mutate(engagement_title = NA_character_) %>%
+  left_join(
+    df_2025_alliance %>%
+      select(salesforce_id, all_of(cols_to_add)),
+    by = "salesforce_id"
+  ) %>% 
+  bind_rows(df_pr %>% filter(engagement_desc=="stories") %>% mutate(engagement_date = as.character(engagement_date))) %>% 
+  mutate(is_engagement=TRUE) %>% 
+  # Add in any Alliance members with no engagements for 2025
+  bind_rows(df_new_alliance_only) %>% 
+  mutate(
+    engagement_type = case_when(
+      engagement_type == "pr"          ~ "pr_placement",
+      engagement_type == "newsletters" ~ "newsletters_engagements",
+      engagement_type == "appreciation_events" ~ "appreciation_event",
+      engagement_type == "petitions" ~ "petition",
+      TRUE                             ~ engagement_type
+    )
+  ) %>% 
+    filter(!salesforce_id == "non-athlete") %>% 
+  # strip out the % signs and convert to percentages in decimal format
+  mutate(
+    across(
+      c(
+        insta_avg_effectiveness_ft_pow,
+        insta_avg_effectiveness,
+        insta_avg_eng_rate_ft_pow,
+        insta_avg_eng_rate_of_all_posts
+      ),
+      ~ as.double(str_remove(.x, "%")) / 100
+    )
+  ) %>% 
+  select(-instagram_username) %>% 
+    select(salesforce_id, full_name, first_name, last_name, investment_level, alliance_group, is_engagement, everything())
+
+# Ensure that all characteristics data is filled in for each person.
+df_combined_final <- df_combined_final %>%
+  left_join(
+    df_2025_alliance %>%
+      select(
+        salesforce_id,
+        full_name,
+        first_name,
+        last_name,
+        investment_level, 
+        alliance_group, 
+        alliance_status, 
+        alliance_member_since, 
+        mailing_zip_postal_code, 
+        mailing_state_province_text_only
+      ),
+    by = "salesforce_id",
+    suffix = c("", "_alliance")
+  ) %>%
+  mutate(
+    full_name = coalesce(full_name, full_name_alliance),
+    first_name = coalesce(first_name, first_name_alliance),
+    last_name = coalesce(last_name, last_name_alliance),
+    investment_level = coalesce(investment_level, investment_level_alliance),
+    alliance_group = coalesce(alliance_group, alliance_group_alliance),
+    alliance_status = coalesce(alliance_status, alliance_status_alliance),
+    alliance_member_since = coalesce(alliance_member_since, alliance_member_since_alliance),
+    mailing_zip_postal_code = coalesce(mailing_zip_postal_code, mailing_zip_postal_code_alliance),
+    mailing_state_province_text_only = coalesce(mailing_state_province_text_only, mailing_state_province_text_only_alliance)
+  )%>%
+  select(-ends_with("_alliance"))
+
+# Clean up some bad dates manually
+df_combined_final <- df_combined_final %>%
+  mutate(
+    engagement_date = case_when(
+      engagement_date == "0-07-16"     ~ "2025-07-16",
+      engagement_date == "2006-12-25"  ~ "2025-06-12",
+      engagement_date == "2008-02-25"  ~ "2025-08-02",
+      engagement_date == "2010-07-25"  ~ "2025-10-07",
+      TRUE                             ~ engagement_date
+    ),
+    engagement_date = as.Date(
+      str_replace_all(as.character(engagement_date), "2026", "2025")
+    )
+  )
 
 
+################################################################################
+### Write final file
+################################################################################
 
+write.csv(df_combined_final, here("plots_tables", "df_combined_clean.csv"))
+write.csv(df_2025_alliance, here("plots_tables", "df_2025_alliance_clean.csv"))
 
 
