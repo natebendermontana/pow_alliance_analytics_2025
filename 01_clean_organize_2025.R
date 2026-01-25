@@ -60,7 +60,8 @@ df_name_corrections <- tribble(
   "full_name", "Cody Cirollo",               "Cody Cirillo",
   "full_name", "Stephanie Howe",               "Stéphanie Howe",
   "full_name", "Steph Howe",               "Stéphanie Howe",
-  "full_name", "Connor Phelan",               "Conor Phelan"
+  "full_name", "Connor Phelan",               "Conor Phelan",
+  "full_name", "Zepplin Zeerip",               "Zeppelin Zeerip"
 )
 
 
@@ -305,12 +306,12 @@ df_2025_alliance_raw <- read.csv(here("data", "clean",  "2025_us_active_alliance
 
 # some athletes are missing accidentally from the 2025 athlete list. Adding them manually
 new_rows <- tibble(
-  full_name          = c("Jared Campbell", "Josh Garrigues", "Tommy Ford", "Zachary Hammer"),
-  first_name         = c("Jared", "Josh", "Tommy", "Zachary"),
-  last_name          = c("Campbell", "Garrigues", "Ford", "Hammer"),
-  investment_level   = c("med", "low", "low", "med"),
-  alliance_group     = c("Run", "Climb", "Ski", "Climb"),
-  alliance_status    = rep("Official Member", 4)
+  full_name          = c("Jared Campbell", "Josh Garrigues", "Tommy Ford", "Zachary Hammer", "Scott Jurek"),
+  first_name         = c("Jared", "Josh", "Tommy", "Zachary", "Scott"),
+  last_name          = c("Campbell", "Garrigues", "Ford", "Hammer", "Jurek"),
+  investment_level   = c("med", "low", "low", "med", "med"),
+  alliance_group     = c("Run", "Climb", "Ski", "Climb", "Run"),
+  alliance_status    = rep("Official Member", 5)
 )
 
 set.seed(01242025)
@@ -936,45 +937,16 @@ df_combined_edits <-  read.csv(here("data", "raw",  "df_combined_for_POW_feedbac
                                                    corrections_df = df_name_corrections),
          first_name = str_trim(str_remove(full_name, "\\s+\\S+$")),
          last_name  = str_extract(full_name, "\\S+$")) %>% 
-  filter(!salesforce_id == "non-athlete") %>% 
+  left_join(df_2025_alliance %>% select(full_name, salesforce_id), by = "full_name") %>% 
+  # treat those with NA salesforce_id as non-athletes, to be counted and removed later
+   filter(!salesforce_id == "non-athlete") %>% 
   mutate(across(everything(), as.character)) %>%
   arrange(salesforce_id) %>%
   mutate(row_index = row_number()) %>% 
   select(-x) %>% 
-  select(row_index, everything())
+  select(row_index, salesforce_id, everything())
 
-df_combined <- df_combined %>% 
-  filter(!salesforce_id == "non-athlete") %>% 
-  mutate(across(everything(), as.character)) %>%
-  arrange(salesforce_id) %>%
-  mutate(row_index = row_number()) %>% 
-  select(row_index, everything())
 
-df_joined <- df_combined_edits %>%
-  left_join(
-    df_combined,
-    by = c("salesforce_id", "row_index"),
-    suffix = c("", "_orig")
-  )
 
-df_changed <- df_joined %>%
-  rowwise() %>%
-  filter(
-    # Case 1: row did not exist in original
-    all(is.na(c_across(ends_with("_orig")))) |
-      
-      # Case 2: row exists but differs in any column
-      any(
-        c_across(-c(salesforce_id, row_index, ends_with("_orig"))) !=
-          c_across(ends_with("_orig")) |
-          xor(
-            is.na(c_across(-c(salesforce_id, row_index, ends_with("_orig")))),
-            is.na(c_across(ends_with("_orig")))
-          )
-      )
-  ) %>%
-  ungroup() %>%
-  select(-ends_with("_orig"), -row_index)
 
-df_combined %>% select(salesforce_id, full_name) %>%  filter(salesforce_id == "non-athlete") %>% View()
 
